@@ -24,53 +24,91 @@ def run_flask():
 
 async def start(update: Update, context: CallbackContext) -> None:
     user = update.message.from_user
-    await update.message.reply_text(f"Hi, {user.first_name}! It's nice to meet you. I am Cynthia, your assistant.")
+    await update.message.reply_text(f"Hi, {user.first_name}! I'm Cynthia, your assistant.")
 
-# /join Command
+async def ping(update: Update, context: CallbackContext) -> None:
+    if update.message.from_user.id in ADMIN_IDS:
+        start_time = time.time()
+        msg = await update.message.reply_text("Pinging...")
+        end_time = time.time()
+        await msg.edit_text(f"Pong! Response time: {round((end_time - start_time) * 1000)}ms")
+    else:
+        await update.message.reply_text("You are not authorized to use this command.")
+
 async def join(update: Update, context: CallbackContext) -> None:
-    user = update.message.from_user
-    user_states[user.id] = "awaiting_join_response"
-    await update.message.reply_text("Do you want to join? Please send a message explaining why.")
-    
-# Handle User Response for /join
+    user_id = update.message.from_user.id
+
+    # Check if user is already in Group P
+    chat_member = await context.bot.get_chat_member(GROUP_P_ID, user_id)
+    if chat_member.status in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER]:
+        await update.message.reply_text("You are already participating!")
+        return
+
+    user_states[user_id] = "waiting_for_join_response"
+    await update.message.reply_text("Do you want to join? Please reply with your reason.")
+
 async def handle_join_response(update: Update, context: CallbackContext) -> None:
-    user = update.message.from_user
-    if user.id in user_states and user_states[user.id] == "awaiting_join_response":
-        user_states.pop(user.id)  # Clear state
-        # Forward the message to the admin group
-        await context.bot.send_message(chat_id=GROUP_A_ID, text=f"Join request from {user.full_name}:\n{update.message.text}")
-        await update.message.reply_text("Your request has been sent to the admins. Please wait for approval.")
+    user_id = update.message.from_user.id
+    if user_id in user_states and user_states[user_id] == "waiting_for_join_response":
+        user_states.pop(user_id)  # Clear state
 
-# /leave Command
+        # Forward message to Group A
+        await context.bot.send_message(GROUP_A_ID, f"Join request from {update.message.from_user.full_name} ({user_id}): {update.message.text}")
+        await update.message.reply_text("Your request has been sent to admins. Please wait for approval.")
+
 async def leave(update: Update, context: CallbackContext) -> None:
-    user = update.message.from_user
-    chat_member = await context.bot.get_chat_member(GROUP_P_ID, user.id)
+    user_id = update.message.from_user.id
 
-    if chat_member.status in [ChatMember.LEFT, ChatMember.KICKED]:
+    # Check if user is in Group P
+    chat_member = await context.bot.get_chat_member(GROUP_P_ID, user_id)
+    if chat_member.status not in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER]:
         await update.message.reply_text("You have not joined yet!")
-    else:
-        user_states[user.id] = "awaiting_leave_reason"
-        await update.message.reply_text("Please mention the reason why you want to leave.")
+        return
 
-# Handle User Response for /leave
+    user_states[user_id] = "waiting_for_leave_reason"
+    await update.message.reply_text("Mention the reason why you want to exit.")
+
 async def handle_leave_reason(update: Update, context: CallbackContext) -> None:
-    user = update.message.from_user
-    if user.id in user_states and user_states[user.id] == "awaiting_leave_reason":
-        user_states.pop(user.id)  # Clear state
-        # Forward the message to the admin group
-        await context.bot.send_message(chat_id=GROUP_A_ID, text=f"Leave request from {user.full_name}:\n{update.message.text}")
-        await update.message.reply_text("Your leave request has been sent to the admins. Please wait for approval.")
+    user_id = update.message.from_user.id
+    if user_id in user_states and user_states[user_id] == "waiting_for_leave_reason":
+        user_states.pop(user_id)  # Clear state
 
-# /cancel Command
+        # Forward leave reason to Group A
+        await context.bot.send_message(GROUP_A_ID, f"Leave request from {update.message.from_user.full_name} ({user_id}): {update.message.text}")
+        await update.message.reply_text("Please wait for the admins' approval.")
+
 async def cancel(update: Update, context: CallbackContext) -> None:
-    user = update.message.from_user
-    if user.id in user_states:
-        user_states.pop(user.id)
-        await update.message.reply_text("Your current request has been canceled.")
+    user_id = update.message.from_user.id
+    if user_id in user_states:
+        del user_states[user_id]
+        await update.message.reply_text("Process canceled.")
     else:
-        await update.message.reply_text("You have no ongoing requests.")
+        await update.message.reply_text("No active process to cancel.")
 
-# /broadcast Command (Admin Only)
+async def send(update: Update, context: CallbackContext) -> None:
+    if update.message.from_user.id not in ADMIN_IDS:
+        await update.message.reply_text("You are not authorized to use this command.")
+        return
+
+    try:
+        args = context.args
+        if not args:
+            await update.message.reply_text("Usage: /send <user_id>")
+            return
+        
+        user_id = int(args[0])
+        if not update.message.reply_to_message:
+            await update.message.reply_text("Reply to a message to send it.")
+            return
+        
+        msg_text = update.message.reply_to_message.text
+        await context.bot.send_message(user_id, msg_text)
+        await update.message.reply_text("Message sent successfully.")
+
+    except Exception as e:
+        await update.message.reply_text("This message failed to send.")
+        logging.error(f"Failed to send message: {e}")
+
 async def broadcast(update: Update, context: CallbackContext) -> None:
     if update.message.from_user.id not in ADMIN_IDS:
         return
@@ -82,31 +120,30 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
 
     for chat_id in user_states.keys():
         try:
-            await context.bot.send_message(chat_id=chat_id, text=message)
+            await context.bot.send_message(chat_id, message)
         except Exception as e:
             logging.warning(f"Failed to send message to {chat_id}: {e}")
 
     await update.message.reply_text("Broadcast message sent!")
 
-# /about Command
 async def about(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text("This bot was created by bbb.")
 
-# /help Command
 async def help_command(update: Update, context: CallbackContext) -> None:
     help_text = """
-    Available commands:
-    /start - Start the bot
-    /join - Request to join the group
-    /leave - Request to leave the group
-    /cancel - Cancel an ongoing request
-    /broadcast - (Admins only) Send a message to all users
-    /about - Information about the bot
-    /help - Show this help message
-    """
+Available commands:
+- /start or /star - Greet the user.
+- /join - Request to join the group.
+- /leave - Request to leave the group.
+- /cancel - Cancel an ongoing request.
+- /send <user_id> (Admins) - Send a message to a user.
+- /broadcast (Admins) - Send a message to all users.
+- /ping (Admins) - Check bot response time.
+- /about - Show bot creator info.
+- /help - List available commands.
+"""
     await update.message.reply_text(help_text)
 
-# Main bot function
 def main():
     app = Application.builder().token(TOKEN).build()
 
@@ -116,6 +153,8 @@ def main():
     app.add_handler(CommandHandler("join", join))
     app.add_handler(CommandHandler("leave", leave))
     app.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(CommandHandler("send", send))
+    app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("broadcast", broadcast, filters.User(ADMIN_IDS)))
     app.add_handler(CommandHandler("about", about))
     app.add_handler(CommandHandler("help", help_command))
@@ -124,6 +163,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_join_response))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_leave_reason))
 
+    logging.info("Bot is running!")
     app.run_polling()
 
 # Run Flask and Telegram Bot in parallel
