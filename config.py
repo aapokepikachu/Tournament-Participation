@@ -1,4 +1,6 @@
-TOKEN = "YOUR_BOT_TOKEN"  # Replace with your bot's API token
-GROUP_A_ID = -123456789   # Admin group ID
-GROUP_P_ID = -987654321   # Private group ID
-ADMIN_IDS = [111111111, 222222222]  # List of bot admin user IDs
+import os
+
+TOKEN = os.getenv("BOT_TOKEN")
+GROUP_A_ID = int(os.getenv("GROUP_A_ID", "-1001234567890"))
+GROUP_P_ID = int(os.getenv("GROUP_P_ID", "-1009876543210"))
+ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "111111111,222222222").split(",")))
